@@ -52,6 +52,8 @@
 #define BUILD_TARGET_RISCV32_ILP32D
 #elif defined(__arc__)
 #define BUILD_TARGET_ARC
+#elif defined(__wasm32__)
+#define BUILD_TARGET "WASM32"
 #else
 #error "Build target isn't set"
 #endif

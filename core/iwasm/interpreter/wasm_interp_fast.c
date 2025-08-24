@@ -1438,7 +1438,6 @@ wasm_interp_dump_op_count()
     do {                                               \
         const void *p_label_addr = *(void **)frame_ip; \
         frame_ip += sizeof(void *);                    \
-        CHECK_INSTRUCTION_LIMIT();                     \
         goto *p_label_addr;                            \
     } while (0)
 #else
@@ -1450,7 +1449,6 @@ wasm_interp_dump_op_count()
         /* int32 relative offset was emitted in 64-bit target */          \
         p_label_addr = label_base + (int32)LOAD_U32_WITH_2U16S(frame_ip); \
         frame_ip += sizeof(int32);                                        \
-        CHECK_INSTRUCTION_LIMIT();                                        \
         goto *p_label_addr;                                               \
     } while (0)
 #else
@@ -1461,11 +1459,17 @@ wasm_interp_dump_op_count()
         /* uint32 label address was emitted in 32-bit target */          \
         p_label_addr = (void *)(uintptr_t)LOAD_U32_WITH_2U16S(frame_ip); \
         frame_ip += sizeof(int32);                                       \
-        CHECK_INSTRUCTION_LIMIT();                                       \
         goto *p_label_addr;                                              \
     } while (0)
 #endif
 #endif /* end of WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS */
+
+/* For labels-as-values, check instruction limit at the start of each handler */
+#if WASM_ENABLE_LABELS_AS_VALUES != 0
+#define HANDLE_OP_BEGIN() CHECK_INSTRUCTION_LIMIT()
+#else
+#define HANDLE_OP_BEGIN() (void)0
+#endif
 #define HANDLE_OP_END() FETCH_OPCODE_AND_DISPATCH()
 
 #else /* else of WASM_ENABLE_LABELS_AS_VALUES */
@@ -1596,6 +1600,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 
 #if WASM_ENABLE_LABELS_AS_VALUES == 0
     while (frame_ip < frame_ip_end) {
+        CHECK_INSTRUCTION_LIMIT();
         opcode = *frame_ip++;
 #if WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS == 0
         frame_ip++;
@@ -1607,12 +1612,14 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
             /* control instructions */
             HANDLE_OP(WASM_OP_UNREACHABLE)
             {
+                HANDLE_OP_BEGIN();
                 wasm_set_exception(module, "unreachable");
                 goto got_exception;
             }
 
             HANDLE_OP(WASM_OP_IF)
             {
+                HANDLE_OP_BEGIN();
                 cond = (uint32)POP_I32();
 
                 if (cond == 0) {
@@ -1649,6 +1656,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 
             HANDLE_OP(WASM_OP_BR_IF)
             {
+                HANDLE_OP_BEGIN();
 #if WASM_ENABLE_THREAD_MGR != 0
                 CHECK_SUSPEND_FLAGS();
 #endif
@@ -7812,6 +7820,12 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 
     got_exception:
         SYNC_ALL_TO_FRAME();
+#if WASM_ENABLE_INSTRUCTION_METERING != 0
+        /* Save remaining instruction count back to exec_env for resume */
+        if (exec_env) {
+            exec_env->instructions_to_execute = instructions_left;
+        }
+#endif
         return;
 
 #if WASM_ENABLE_LABELS_AS_VALUES == 0
